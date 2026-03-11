@@ -150,10 +150,10 @@ def _compute_onset_envelope(
         Onset strength envelope.
     """
     if method == "energy":
-        # RMS energy-based onset detection
-        return librosa.onset.onset_strength(
-            y=y, sr=sr, feature=librosa.feature.rms
-        )
+        # RMS energy-based onset detection — pre-compute RMS and pass as S
+        rms = librosa.feature.rms(y=y)
+        # onset_strength expects a 2D spectrogram-like input
+        return librosa.onset.onset_strength(S=rms, sr=sr)
     elif method == "complex_domain":
         # Use STFT magnitude for complex domain approximation
         S = np.abs(librosa.stft(y))
