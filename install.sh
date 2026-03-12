@@ -68,24 +68,41 @@ echo ""
 echo "Installing di-quantizer..."
 echo ""
 
-# Try normal install first (works with Homebrew Python), fall back to --user
-if ! $PYTHON -m pip install . 2>&1 | tail -5; then
-    echo "Retrying with --user flag..."
-    $PYTHON -m pip install --user . 2>&1 | tail -5
+# Use pipx if available (handles PATH automatically), otherwise pip
+INSTALLED_VIA=""
+if command -v pipx >/dev/null 2>&1; then
+    echo "Using pipx..."
+    pipx install --force . 2>&1 | tail -5 && INSTALLED_VIA="pipx"
 fi
+
+if [ -z "$INSTALLED_VIA" ]; then
+    # Try normal pip install first; capture output to preserve exit code
+    set +e
+    PIP_OUT=$($PYTHON -m pip install . 2>&1)
+    PIP_RC=$?
+    set -e
+    echo "$PIP_OUT" | tail -5
+    if [ "$PIP_RC" -ne 0 ]; then
+        # Likely hit externally-managed-environment error; try --user
+        echo ""
+        echo "Retrying with --user flag..."
+        $PYTHON -m pip install --user . 2>&1 | tail -5
+    fi
+    INSTALLED_VIA="pip"
+fi
+
+# Refresh shell hash table so 'command -v' picks up newly installed scripts
+hash -r 2>/dev/null || true
 
 # --- Verify ---
 echo ""
 
-# Find where pip put the diq script
-find_diq() {
-    # Check PATH first
-    command -v diq 2>/dev/null && return 0
-    # Check common pip install locations
+# Collect all directories where diq might have been installed
+find_diq_dir() {
+    local dir
     for dir in \
         "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>/dev/null)" \
         "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>/dev/null)" \
-        "$($PYTHON -c "import site; print(site.getusersitepackages().replace('/lib/', '/bin/'))" 2>/dev/null)" \
         /opt/homebrew/bin \
         /usr/local/bin \
         "$HOME/.local/bin" \
@@ -94,47 +111,61 @@ find_diq() {
         "$HOME/Library/Python/3.12/bin" \
         "$HOME/Library/Python/3.11/bin" \
         "$HOME/Library/Python/3.10/bin"; do
-        [ -n "$dir" ] && [ -f "$dir/diq" ] && echo "$dir/diq" && return 0
+        [ -n "$dir" ] && [ -f "$dir/diq" ] && echo "$dir" && return 0
     done
     return 1
 }
 
-DIQ_PATH=$(find_diq)
+if command -v diq >/dev/null 2>&1; then
+    echo -e "${GREEN}Installed successfully!${NC}"
+    echo ""
+    echo "  You can now run:  diq quantize your_file.wav --bpm 120"
+    echo ""
+elif DIQ_DIR=$(find_diq_dir); then
+    # Found it, but it's not on PATH — fix that
+    export PATH="$DIQ_DIR:$PATH"
 
-if [ -n "$DIQ_PATH" ]; then
-    DIQ_DIR=$(dirname "$DIQ_PATH")
-
-    # Check if it's already usable via PATH
-    if command -v diq >/dev/null 2>&1; then
-        echo -e "${GREEN}Installed successfully!${NC}"
-        echo ""
-        echo "  You can now run:  diq quantize your_file.wav --bpm 120"
-        echo ""
+    SHELL_NAME=$(basename "${SHELL:-bash}")
+    if [ "$SHELL_NAME" = "zsh" ]; then
+        RC_FILE="$HOME/.zshrc"
+    elif [ "$SHELL_NAME" = "fish" ]; then
+        RC_FILE="$HOME/.config/fish/config.fish"
     else
-        # Add to PATH in current shell and shell config
-        export PATH="$DIQ_DIR:$PATH"
+        RC_FILE="$HOME/.bashrc"
+    fi
 
-        SHELL_NAME=$(basename "${SHELL:-bash}")
-        if [ "$SHELL_NAME" = "zsh" ]; then
-            RC_FILE="$HOME/.zshrc"
-        else
-            RC_FILE="$HOME/.bashrc"
+    # Add to shell config if not already there
+    if [ "$SHELL_NAME" = "fish" ]; then
+        if ! grep -q "$DIQ_DIR" "$RC_FILE" 2>/dev/null; then
+            mkdir -p "$(dirname "$RC_FILE")"
+            echo "" >> "$RC_FILE"
+            echo "# Added by di-quantizer installer" >> "$RC_FILE"
+            echo "set -gx PATH $DIQ_DIR \$PATH" >> "$RC_FILE"
         fi
-
-        # Add to shell config if not already there
+    else
         if ! grep -q "$DIQ_DIR" "$RC_FILE" 2>/dev/null; then
             echo "" >> "$RC_FILE"
             echo "# Added by di-quantizer installer" >> "$RC_FILE"
             echo "export PATH=\"$DIQ_DIR:\$PATH\"" >> "$RC_FILE"
         fi
-
-        echo -e "${GREEN}Installed successfully!${NC}"
-        echo ""
-        echo -e "${YELLOW}NOTE: Restart your terminal (or run 'source $RC_FILE') for the 'diq' command to work.${NC}"
-        echo ""
-        echo "  Then run:  diq quantize your_file.wav --bpm 120"
-        echo ""
     fi
+
+    echo -e "${GREEN}Installed successfully!${NC}"
+    echo ""
+    echo -e "  'diq' was installed to ${YELLOW}$DIQ_DIR${NC}"
+    echo ""
+    echo -e "  ${YELLOW}To start using it, run:${NC}"
+    echo ""
+    if [ "$SHELL_NAME" = "fish" ]; then
+        echo "    source $RC_FILE"
+    else
+        echo "    source $RC_FILE"
+    fi
+    echo ""
+    echo "  Or just open a new terminal, then:"
+    echo ""
+    echo "    diq quantize your_file.wav --bpm 120"
+    echo ""
 else
     echo -e "${YELLOW}Install finished. Use this command to run it:${NC}"
     echo ""
