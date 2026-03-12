@@ -68,44 +68,76 @@ echo ""
 echo "Installing di-quantizer..."
 echo ""
 
-$PYTHON -m pip install --user . 2>&1 | tail -5
+# Try normal install first (works with Homebrew Python), fall back to --user
+if ! $PYTHON -m pip install . 2>&1 | tail -5; then
+    echo "Retrying with --user flag..."
+    $PYTHON -m pip install --user . 2>&1 | tail -5
+fi
 
 # --- Verify ---
 echo ""
 
-# Check if the user's local bin is on PATH
-USER_BIN=$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>/dev/null || true)
+# Find where pip put the diq script
+find_diq() {
+    # Check PATH first
+    command -v diq 2>/dev/null && return 0
+    # Check common pip install locations
+    for dir in \
+        "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>/dev/null)" \
+        "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>/dev/null)" \
+        "$($PYTHON -c "import site; print(site.getusersitepackages().replace('/lib/', '/bin/'))" 2>/dev/null)" \
+        /opt/homebrew/bin \
+        /usr/local/bin \
+        "$HOME/.local/bin" \
+        "$HOME/Library/Python/3.14/bin" \
+        "$HOME/Library/Python/3.13/bin" \
+        "$HOME/Library/Python/3.12/bin" \
+        "$HOME/Library/Python/3.11/bin" \
+        "$HOME/Library/Python/3.10/bin"; do
+        [ -n "$dir" ] && [ -f "$dir/diq" ] && echo "$dir/diq" && return 0
+    done
+    return 1
+}
 
-if command -v diq &>/dev/null; then
-    echo -e "${GREEN}Installed successfully!${NC}"
-    echo ""
-    echo "  You can now run:  diq quantize your_file.wav --bpm 120"
-    echo ""
-elif [ -n "$USER_BIN" ] && [ -f "$USER_BIN/diq" ]; then
-    echo -e "${YELLOW}Installed, but $USER_BIN is not on your PATH.${NC}"
-    echo ""
-    SHELL_NAME=$(basename "$SHELL")
-    if [ "$SHELL_NAME" = "zsh" ]; then
-        RC_FILE="~/.zshrc"
-    else
-        RC_FILE="~/.bashrc"
-    fi
-    echo "  Add it by running this, then restart your terminal:"
-    echo ""
-    echo "    echo 'export PATH=\"$USER_BIN:\$PATH\"' >> $RC_FILE"
-    echo ""
-else
-    # Fallback: try a global install
-    echo -e "${YELLOW}User install didn't put diq on PATH. Trying global install...${NC}"
-    $PYTHON -m pip install . 2>&1 | tail -3
-    if command -v diq &>/dev/null; then
+DIQ_PATH=$(find_diq)
+
+if [ -n "$DIQ_PATH" ]; then
+    DIQ_DIR=$(dirname "$DIQ_PATH")
+
+    # Check if it's already usable via PATH
+    if command -v diq >/dev/null 2>&1; then
         echo -e "${GREEN}Installed successfully!${NC}"
         echo ""
         echo "  You can now run:  diq quantize your_file.wav --bpm 120"
         echo ""
     else
-        echo -e "${RED}Install finished but 'diq' command not found.${NC}"
-        echo "  You can still run it with:  $PYTHON -m di_quantizer"
+        # Add to PATH in current shell and shell config
+        export PATH="$DIQ_DIR:$PATH"
+
+        SHELL_NAME=$(basename "${SHELL:-bash}")
+        if [ "$SHELL_NAME" = "zsh" ]; then
+            RC_FILE="$HOME/.zshrc"
+        else
+            RC_FILE="$HOME/.bashrc"
+        fi
+
+        # Add to shell config if not already there
+        if ! grep -q "$DIQ_DIR" "$RC_FILE" 2>/dev/null; then
+            echo "" >> "$RC_FILE"
+            echo "# Added by di-quantizer installer" >> "$RC_FILE"
+            echo "export PATH=\"$DIQ_DIR:\$PATH\"" >> "$RC_FILE"
+        fi
+
+        echo -e "${GREEN}Installed successfully!${NC}"
+        echo ""
+        echo -e "${YELLOW}NOTE: Restart your terminal (or run 'source $RC_FILE') for the 'diq' command to work.${NC}"
+        echo ""
+        echo "  Then run:  diq quantize your_file.wav --bpm 120"
         echo ""
     fi
+else
+    echo -e "${YELLOW}Install finished. Use this command to run it:${NC}"
+    echo ""
+    echo "  $PYTHON -m di_quantizer quantize your_file.wav --bpm 120"
+    echo ""
 fi
