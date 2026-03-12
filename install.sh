@@ -15,16 +15,33 @@ echo "  ======================"
 echo ""
 
 # --- Check Python ---
+# Ensure Homebrew paths are available (macOS)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    for brewdir in /opt/homebrew/bin /usr/local/bin; do
+        [[ -d "$brewdir" ]] && [[ ":$PATH:" != *":$brewdir:"* ]] && export PATH="$brewdir:$PATH"
+    done
+fi
+
+check_python() {
+    local cmd="$1"
+    if [ -x "$cmd" ] || command -v "$cmd" >/dev/null 2>&1; then
+        local ver
+        ver=$("$cmd" --version 2>&1) || return 1
+        local major minor
+        major=$(echo "$ver" | sed -n 's/.*Python \([0-9]*\)\.\([0-9]*\).*/\1/p')
+        minor=$(echo "$ver" | sed -n 's/.*Python \([0-9]*\)\.\([0-9]*\).*/\2/p')
+        [ -n "$major" ] && [ "$major" -ge 3 ] 2>/dev/null && [ "$minor" -ge 10 ] 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 PYTHON=""
-for cmd in python3 python; do
-    if command -v "$cmd" &>/dev/null; then
-        version=$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+')
-        major=$(echo "$version" | cut -d. -f1)
-        minor=$(echo "$version" | cut -d. -f2)
-        if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
-            PYTHON="$cmd"
-            break
-        fi
+for cmd in python3 python python3.14 python3.13 python3.12 python3.11 python3.10 \
+           /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if check_python "$cmd"; then
+        PYTHON="$cmd"
+        break
     fi
 done
 
