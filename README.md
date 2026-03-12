@@ -10,11 +10,21 @@ Logic Pro X's Flex Time onset detection is tuned for percussive material — dru
 
 ## Install
 
+**You need Python 3.10+ installed.** If you don't have it:
+- **Mac:** Open Terminal and run: `brew install python` (if you don't have Homebrew, [install it first](https://brew.sh))
+- **Windows:** Download from [python.org](https://www.python.org/downloads/) — check "Add to PATH" during install
+
+Then, open Terminal (Mac) or Command Prompt (Windows) and run:
+
 ```bash
-pipx install di-quantizer
-# or
-pip install di-quantizer
+git clone https://github.com/shillwil/di-quantizer.git
+cd di-quantizer
+bash install.sh
 ```
+
+That's it. No virtual environments, no extra setup.
+
+If the installer says `diq` isn't on your PATH, follow the one-line fix it prints, then restart your terminal.
 
 ## Quick Start
 
@@ -29,10 +39,11 @@ diq quantize guitar_di.wav --bpm 145 --profile rhythm-tight
 
 1. **Record** DI guitar in Logic Pro (or any DAW)
 2. **Export** the DI track as WAV or AIFF
-3. **Run** `diq quantize` on it
-4. **Import** the quantized WAV back into your session
-5. **Touch up** any remaining timing issues in Logic Pro
-6. **Reamp** through your amp sim / real cab as usual
+3. **Open Terminal**, `cd` to where the file is
+4. **Run** `diq quantize yourfile.wav --bpm 145 --profile rhythm-tight`
+5. **Import** the `_quantized.wav` file back into your session
+6. **Touch up** any remaining timing issues in Logic Pro
+7. **Reamp** through your amp sim / real cab as usual
 
 ## Profiles
 
@@ -165,6 +176,8 @@ cd di-quantizer
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+Or just run `bash install.sh` to install without dev dependencies.
 
 ## License
 
