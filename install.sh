@@ -63,68 +63,55 @@ fi
 
 echo -e "${GREEN}Found $PYTHON ($($PYTHON --version))${NC}"
 
-# --- Install ---
+# --- Install into a virtual environment ---
+# Modern Python (3.12+ / Homebrew) blocks pip install outside a venv (PEP 668).
+# We create a dedicated venv, install there, and symlink the 'diq' command.
+
 echo ""
 echo "Installing di-quantizer..."
 echo ""
 
-# Use pipx if available (handles PATH automatically), otherwise pip
-INSTALLED_VIA=""
-if command -v pipx >/dev/null 2>&1; then
-    echo "Using pipx..."
-    pipx install --force . 2>&1 | tail -5 && INSTALLED_VIA="pipx"
+INSTALL_DIR="$HOME/.local/share/di-quantizer"
+BIN_DIR="$HOME/.local/bin"
+VENV_DIR="$INSTALL_DIR/venv"
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Clean previous install if present
+[ -d "$INSTALL_DIR" ] && rm -rf "$INSTALL_DIR"
+
+# Create venv
+echo "  Creating virtual environment..."
+$PYTHON -m venv "$VENV_DIR"
+
+# Install into the venv
+echo "  Installing package (this may take a minute)..."
+"$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+"$VENV_DIR/bin/pip" install "$SRC_DIR" 2>&1 | tail -3
+
+# Verify the diq script exists in the venv
+if [ ! -f "$VENV_DIR/bin/diq" ]; then
+    echo -e "${RED}Install failed — diq was not created in the venv.${NC}"
+    echo "  Please report this issue."
+    exit 1
 fi
 
-if [ -z "$INSTALLED_VIA" ]; then
-    # Try normal pip install first; capture output to preserve exit code
-    set +e
-    PIP_OUT=$($PYTHON -m pip install . 2>&1)
-    PIP_RC=$?
-    set -e
-    echo "$PIP_OUT" | tail -5
-    if [ "$PIP_RC" -ne 0 ]; then
-        # Likely hit externally-managed-environment error; try --user
-        echo ""
-        echo "Retrying with --user flag..."
-        $PYTHON -m pip install --user . 2>&1 | tail -5
-    fi
-    INSTALLED_VIA="pip"
-fi
+# Create ~/.local/bin and symlink diq into it
+mkdir -p "$BIN_DIR"
+ln -sf "$VENV_DIR/bin/diq" "$BIN_DIR/diq"
 
-# Refresh shell hash table so 'command -v' picks up newly installed scripts
+# Refresh shell hash table
 hash -r 2>/dev/null || true
 
 # --- Verify ---
 echo ""
-
-# Collect all directories where diq might have been installed
-find_diq_dir() {
-    local dir
-    for dir in \
-        "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>/dev/null)" \
-        "$($PYTHON -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>/dev/null)" \
-        /opt/homebrew/bin \
-        /usr/local/bin \
-        "$HOME/.local/bin" \
-        "$HOME/Library/Python/3.14/bin" \
-        "$HOME/Library/Python/3.13/bin" \
-        "$HOME/Library/Python/3.12/bin" \
-        "$HOME/Library/Python/3.11/bin" \
-        "$HOME/Library/Python/3.10/bin"; do
-        [ -n "$dir" ] && [ -f "$dir/diq" ] && echo "$dir" && return 0
-    done
-    return 1
-}
 
 if command -v diq >/dev/null 2>&1; then
     echo -e "${GREEN}Installed successfully!${NC}"
     echo ""
     echo "  You can now run:  diq quantize your_file.wav --bpm 120"
     echo ""
-elif DIQ_DIR=$(find_diq_dir); then
-    # Found it, but it's not on PATH — fix that
-    export PATH="$DIQ_DIR:$PATH"
-
+elif [ -x "$BIN_DIR/diq" ]; then
+    # ~/.local/bin exists but isn't on PATH — add it
     SHELL_NAME=$(basename "${SHELL:-bash}")
     if [ "$SHELL_NAME" = "zsh" ]; then
         RC_FILE="$HOME/.zshrc"
@@ -134,41 +121,32 @@ elif DIQ_DIR=$(find_diq_dir); then
         RC_FILE="$HOME/.bashrc"
     fi
 
-    # Add to shell config if not already there
     if [ "$SHELL_NAME" = "fish" ]; then
-        if ! grep -q "$DIQ_DIR" "$RC_FILE" 2>/dev/null; then
+        if ! grep -q "$BIN_DIR" "$RC_FILE" 2>/dev/null; then
             mkdir -p "$(dirname "$RC_FILE")"
             echo "" >> "$RC_FILE"
             echo "# Added by di-quantizer installer" >> "$RC_FILE"
-            echo "set -gx PATH $DIQ_DIR \$PATH" >> "$RC_FILE"
+            echo "set -gx PATH $BIN_DIR \$PATH" >> "$RC_FILE"
         fi
     else
-        if ! grep -q "$DIQ_DIR" "$RC_FILE" 2>/dev/null; then
+        if ! grep -q "$BIN_DIR" "$RC_FILE" 2>/dev/null; then
             echo "" >> "$RC_FILE"
             echo "# Added by di-quantizer installer" >> "$RC_FILE"
-            echo "export PATH=\"$DIQ_DIR:\$PATH\"" >> "$RC_FILE"
+            echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$RC_FILE"
         fi
     fi
 
     echo -e "${GREEN}Installed successfully!${NC}"
     echo ""
-    echo -e "  'diq' was installed to ${YELLOW}$DIQ_DIR${NC}"
+    echo -e "  ${YELLOW}One more step — run this, then you're good:${NC}"
     echo ""
-    echo -e "  ${YELLOW}To start using it, run:${NC}"
+    echo "    source $RC_FILE"
     echo ""
-    if [ "$SHELL_NAME" = "fish" ]; then
-        echo "    source $RC_FILE"
-    else
-        echo "    source $RC_FILE"
-    fi
-    echo ""
-    echo "  Or just open a new terminal, then:"
-    echo ""
-    echo "    diq quantize your_file.wav --bpm 120"
+    echo "  Then:  diq quantize your_file.wav --bpm 120"
     echo ""
 else
-    echo -e "${YELLOW}Install finished. Use this command to run it:${NC}"
-    echo ""
-    echo "  $PYTHON -m di_quantizer quantize your_file.wav --bpm 120"
+    echo -e "${RED}Something went wrong. The symlink at $BIN_DIR/diq is missing.${NC}"
+    echo "  You can still run it directly:"
+    echo "    $VENV_DIR/bin/diq quantize your_file.wav --bpm 120"
     echo ""
 fi
