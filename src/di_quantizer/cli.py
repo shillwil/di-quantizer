@@ -13,6 +13,11 @@ from di_quantizer.detector import detect_onsets
 from di_quantizer.grid import build_grid, snap_to_grid
 from di_quantizer.onset_map import extract_times, load_onset_map, save_onset_map
 from di_quantizer.profiles import PROFILES, get_profile
+from di_quantizer.compare import (
+    detect_human_edits,
+    format_compare_summary,
+    plot_comparison,
+)
 from di_quantizer.reporter import format_summary, generate_report, save_report
 from di_quantizer.reviewer import plot_onsets
 from di_quantizer.slicer import quantize_audio
@@ -336,3 +341,92 @@ def review(input_file, onset_map_path, output_path):
     )
 
     click.echo(f"Review visualization: {output_path}")
+
+
+@cli.command()
+@click.argument("original_file", type=click.Path(exists=True))
+@click.argument("edited_file", type=click.Path(exists=True))
+@click.option("--bpm", type=float, required=True, help="Tempo of the session.")
+@click.option("--time-sig", default="4/4", help="Time signature.")
+@click.option("--grid", "grid_res", default="16",
+              type=click.Choice(["4", "8", "16", "32", "8t", "16t"]),
+              help="Grid subdivision.")
+@click.option("--profile", default="custom",
+              type=click.Choice(list(PROFILES.keys())),
+              help="Preset profile name.")
+@click.option("--tolerance", type=float, default=30.0,
+              help="Max ms distance to consider two onsets the same note (default: 30).")
+@click.option("--output", "output_path", type=click.Path(), default=None,
+              help="Output JSON path for comparison results.")
+@click.option("--visualize/--no-visualize", default=True,
+              help="Generate comparison visualization PNG.")
+@detection_options
+def compare(original_file, edited_file, bpm, time_sig, grid_res, profile,
+            tolerance, output_path, visualize, **det_kwargs):
+    """Compare auto-quantized results against a human-edited reference.
+
+    Give it the original DI recording and the version a human engineer
+    manually quantized. It'll show where the auto-quantizer agrees and
+    disagrees, so you can tune the algorithm.
+
+    \b
+    Example:
+      diq compare raw_di.wav producer_edit.wav --bpm 140 --profile rhythm-tight
+    """
+    import json
+
+    params = _resolve_params(profile, **det_kwargs)
+
+    click.echo(f"Detecting onsets in original: {Path(original_file).name}")
+    click.echo(f"Detecting onsets in human edit: {Path(edited_file).name}")
+    click.echo(f"Profile: {profile}, BPM: {bpm}, Grid: {grid_res}")
+    click.echo("")
+
+    detection_params = {
+        "sensitivity": params["sensitivity"],
+        "onset_method": params["onset_method"],
+        "freq_low": params["freq_low"],
+        "freq_high": params["freq_high"],
+        "pre_emphasis": params["pre_emphasis"],
+        "min_onset_interval_ms": params["min_onset_interval_ms"],
+    }
+
+    result = detect_human_edits(
+        original_file, edited_file, detection_params,
+        bpm, time_sig, grid_res, tolerance,
+    )
+
+    click.echo(format_compare_summary(result))
+
+    # Show the worst disagreements
+    paired = [c for c in result["comparisons"] if c.get("type") == "paired"]
+    worst = sorted(paired, key=lambda c: abs(c["disagreement_ms"]), reverse=True)[:10]
+
+    if worst and abs(worst[0]["disagreement_ms"]) > 2.0:
+        click.echo("")
+        click.echo("  Biggest disagreements:")
+        for c in worst:
+            if abs(c["disagreement_ms"]) < 2.0:
+                break
+            direction = "early" if c["disagreement_ms"] < 0 else "late"
+            click.echo(
+                f"    {c['auto_grid_label']:>10}  "
+                f"auto {c['auto_delta_ms']:+.1f}ms  "
+                f"human {c['human_delta_ms']:+.1f}ms  "
+                f"(auto is {abs(c['disagreement_ms']):.1f}ms {direction})"
+            )
+
+    # Save JSON
+    if not output_path:
+        stem = Path(original_file).stem
+        output_path = str(Path(original_file).parent / f"{stem}_compare.json")
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+    click.echo(f"\n  Report: {output_path}")
+
+    # Visualization
+    if visualize:
+        png_path = str(Path(output_path).with_suffix(".png"))
+        plot_comparison(original_file, result, png_path)
+        click.echo(f"  Visualization: {png_path}")
